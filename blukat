@@ -1,0 +1,63 @@
+Source code in C:
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <fcntl.h>
+char flag[100];
+char password[100];
+char* key = "3\rG[S/%\x1c\x1d#0?\rIS\x0f\x1c\x1d\x18;,4\x1b\x00\x1bp;5\x0b\x1b\x08\x45+";
+void calc_flag(char* s){
+	int i;
+	for(i=0; i<strlen(s); i++){
+		flag[i] = s[i] ^ key[i];
+	}
+	printf("%s\n", flag);
+}
+int main(){
+	FILE* fp = fopen("/home/blukat/password", "r");
+	fgets(password, 100, fp);
+	char buf[100];
+	printf("guess the password!\n");
+	fgets(buf, 128, stdin);
+	if(!strcmp(password, buf)){
+		printf("congrats! here is your flag: ");
+		calc_flag(password);
+	}
+	else{
+		printf("wrong guess!\n");
+		exit(0);
+	}
+	return 0;
+}
+
+As buf is 100 bytes long and fgets allows 128 to be read, I looked for a buffer overflow. 
+
+From the assembly code, we can overwrite the return address of main with the address of calc_func.
+However, we don't return as exit(0) is called in the else block.
+Furthermore, we can't overwrite the return address of puts nor exit's as they are located at a lower address in the stack.
+
+The BOF seems to be a dead end (I might have missed something, but a canary is also used for detecting stack corruption as evident from the assembly code).
+
+
+Upon 'cat password' we get 'cat: password: Permission denied', which suggests we don't have the credentials to access this file.
+
+However:
+
+We see from ls -l that 'password' belongs to the blukat_pwn group and that group users can read the file:
+
+blukat@pwnable:~$ ls -l | grep password
+-rw-r-----   1 root blukat_pwn   33 Jan  6  2017 password
+
+We see from id that we are a part of this group.
+
+blukat@pwnable:~$ id
+uid=1104(blukat) gid=1104(blukat) groups=1104(blukat),1105(blukat_pwn)
+
+Thus the apparent error message is actually the content of the password file:
+
+blukat@pwnable:~$ ./blukat
+guess the password!
+cat: password: Permission denied
+congrats! here is your flag: Pl3as_DonT_Miss_youR_GrouP_Perm!!
+
